@@ -1,0 +1,49 @@
+# cloudflared tunnel login                      # generate ~/.cloudflared/cert.pem
+# cloudflared tunnel create proxmox             # generate ~/.cloudflared/<TUNNEL-ID>.json
+
+# kubectl create ns cloudflared
+# kubectl create secret generic cloudflared-credentials -n cloudflared \
+#  --from-file=cert.pem=$HOME/.cloudflared/cert.pem \
+#  --from-file=credentials.json=$HOME/.cloudflared/<TUNNEL-ID>.json
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cloudflared
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://community-charts.github.io/helm-charts
+    targetRevision: 2.2.14
+    chart: cloudflared
+    helm:
+      releaseName: cloudflared
+      valuesObject:
+        replica:
+          allNodes: false
+          count: 2
+        tunnelConfig:
+          name: proxmox
+          noAutoUpdate: true
+          protocol: quic
+        tunnelSecrets:
+          existingPemFileSecret:
+            name: cloudflared-credentials
+            key: cert.pem
+          existingConfigJsonFileSecret:
+            name: cloudflared-credentials
+            key: credentials.json
+        ingress:
+          - service: http_status:404
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cloudflared
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
