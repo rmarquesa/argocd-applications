@@ -1,0 +1,42 @@
+# helm repo add grafana-community https://grafana-community.github.io/helm-charts --force-update
+# helm search repo grafana-community/grafana --versions | more
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: grafana
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://grafana-community.github.io/helm-charts
+    targetRevision: 12.10.3
+    chart: grafana
+    helm:
+      releaseName: grafana
+      valuesObject:
+        installCRDs: true
+      ingress:
+        enabled: true
+        ingressClassName: traefik-1785534232
+        annotations:
+          traefik.ingress.kubernetes.io/router.entrypoints: websecure
+          traefik.ingress.kubernetes.io/router.tls: "true"
+        labels: {}
+        path: /
+        pathType: Prefix
+        hosts:
+          - grafana.apps.l3softwares.local
+        extraPaths: []
+        tls: []
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
