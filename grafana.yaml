@@ -20,7 +20,7 @@ spec:
         installCRDs: true
       ingress:
         enabled: true
-        ingressClassName: traefik-1785534232
+        ingressClassName: traefik
         annotations:
           traefik.ingress.kubernetes.io/router.entrypoints: websecure
           traefik.ingress.kubernetes.io/router.tls: "true"
