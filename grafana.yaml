@@ -17,6 +17,8 @@ spec:
     helm:
       releaseName: grafana
       valuesObject:
+        persistence:
+          enabled: true
         ingress:
           enabled: true
           ingressClassName: traefik
