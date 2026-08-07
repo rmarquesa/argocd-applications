@@ -1,5 +1,20 @@
 # helm repo add grafana-community https://grafana-community.github.io/helm-charts --force-update
 # helm search repo grafana-community/grafana --versions | more
+#
+# Observability UI. Loki is provisioned as the default datasource, so log
+# queries work out of the box with no manual setup after a fresh install.
+#
+# Ingress notes:
+#   - ingressClassName MUST be "traefik" (see `kubectl get ingressclass`).
+#     A name that matches no IngressClass makes Traefik silently ignore the
+#     Ingress: ADDRESS stays empty and Traefik answers 404.
+#   - The host MUST live under *.apps.l3softwares.local, otherwise external-dns
+#     ignores it (--domain-filter=apps.l3softwares.local) and DNS returns NXDOMAIN.
+#   - No spec.tls on purpose: Traefik's default TLSStore already serves a
+#     wildcard cert covering *.apps.l3softwares.local. The two router
+#     annotations are what put this Ingress on the HTTPS entrypoint.
+#   - root_url must be set explicitly, otherwise Grafana builds absolute links
+#     as http://<host>:3000/ and login redirects break behind the proxy.
 
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -30,6 +45,21 @@ spec:
           hosts:
             - grafana.apps.l3softwares.local
           tls: []
+        # Loki ships as the default datasource. It is a single-tenant install
+        # (auth_enabled: false), so no X-Scope-OrgID header is required.
+        datasources:
+          datasources.yaml:
+            apiVersion: 1
+            datasources:
+              - name: Loki
+                type: loki
+                uid: loki
+                access: proxy
+                url: http://loki.monitoring.svc.cluster.local:3100
+                isDefault: true
+                jsonData:
+                  # Keep in sync with the Loki retention_period (168h).
+                  maxLines: 1000
         grafana.ini:
           server:
             root_url: https://grafana.apps.l3softwares.local
