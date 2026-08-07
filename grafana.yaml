@@ -1,6 +1,41 @@
 # helm repo add grafana-community https://grafana-community.github.io/helm-charts --force-update
 # helm search repo grafana-community/grafana --versions | more
 #
+# Observability UI. Loki is provisioned as the default datasource, so log
+# queries work out of the box with no manual setup after a fresh install.
+#
+# Ingress notes:
+#   - ingressClassName MUST be "traefik" (see `kubectl get ingressclass`).
+#     A name that matches no IngressClass makes Traefik silently ignore the
+#     Ingress: ADDRESS stays empty and Traefik answers 404.
+#   - The host MUST live under *.apps.l3softwares.local, otherwise external-dns
+#     ignores it (--domain-filter=apps.l3softwares.local) and DNS returns NXDOMAIN.
+#   - No spec.tls on purpose: Traefik's default TLSStore already serves a
+#     wildcard cert covering *.apps.l3softwares.local. The two router
+#     annotations are what put this Ingress on the HTTPS entrypoint.
+#   - root_url must be set explicitly, otherwise Grafana builds absolute links
+#     as http://<host>:3000/ and login redirects break behind the proxy.
+#
+# Admin credentials live in the grafana-admin Secret, created out of band so
+# they are never committed here. Without it the chart generates a new random
+# password on every helm upgrade, while the admin row inside the persisted
+# database keeps the old one -- the Secret and the actual login silently drift
+# apart. Create it once, before the first sync:
+#
+#   kubectl create secret generic grafana-admin -n monitoring \
+#     --from-literal=admin-user=admin \
+#     --from-literal=admin-password="$(openssl rand -base64 24)"
+#
+# Read it back with:
+#
+#   kubectl get secret grafana-admin -n monitoring \
+#     -o jsonpath='{.data.admin-password}' | base64 -d
+#
+# If the Secret is rotated after the database already exists, Grafana will not
+# pick up the new value on its own -- reset it inside the pod:
+#
+#   kubectl exec -n monitoring deploy/grafana -- \
+#     grafana cli --homepath /usr/share/grafana admin reset-admin-password '<password>'
 
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -18,6 +53,11 @@ spec:
     helm:
       releaseName: grafana
       valuesObject:
+        # Credentials from the out-of-band Secret (see header for the command).
+        admin:
+          existingSecret: grafana-admin
+          userKey: admin-user
+          passwordKey: admin-password
         persistence:
           enabled: true
         ingress:
