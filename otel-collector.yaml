@@ -49,6 +49,11 @@ spec:
               endpoint: tempo.monitoring.svc.cluster.local:4317
               tls:
                 insecure: true
+            # Prometheus exposes an OTLP endpoint only when its CR sets
+            # enableOTLPReceiver: true (see kube-prometheus-stack.yaml).
+            # Without that flag this returns 404 on every push.
+            otlphttp/prometheus:
+              endpoint: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090/api/v1/otlp
           service:
             pipelines:
               logs:
@@ -62,7 +67,7 @@ spec:
               metrics:
                 receivers: [otlp, prometheus]
                 processors: [memory_limiter, batch]
-                exporters: [debug]
+                exporters: [otlphttp/prometheus]
   destination:
     server: https://kubernetes.default.svc
     namespace: monitoring
