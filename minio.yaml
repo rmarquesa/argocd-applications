@@ -1,15 +1,6 @@
 # helm repo add minio https://charts.min.io/ --force-update
 # helm search repo minio/minio --versions | more
 #
-# Cluster-wide object storage. Every application gets its own bucket, its own
-# user and a policy scoped to that bucket only -- the loki user cannot read
-# postgres backups, and vice versa. To onboard a new app, add one entry to
-# each of buckets/policies/users below. Nothing else changes.
-#
-# Secrets never live in this file: each user points at a Secret that already
-# exists in the minio-lab namespace (existingSecret/existingSecretKey). This
-# repository is public.
-
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
