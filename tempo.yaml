@@ -9,20 +9,6 @@
 # Traces reach Tempo through the OTLP collector, never directly:
 #   sources -> otel-collector -> tempo:4317 (OTLP/gRPC)
 #
-# Notes on the overrides:
-#   - storage.trace.backend: the chart defaults to `local`, which writes blocks
-#     to the PVC and does not survive a rescheduled pod. s3 points at MinIO.
-#   - s3.insecure: plain HTTP inside the cluster; MinIO is never exposed.
-#   - Credentials are NOT set under s3.access_key/secret_key on purpose. They
-#     come from the tempo-s3-credentials Secret as AWS_ACCESS_KEY_ID /
-#     AWS_SECRET_ACCESS_KEY and are picked up by the AWS SDK, so nothing
-#     sensitive lands in this public repository.
-#   - retention 168h to match Loki, so a trace and its logs expire together.
-#     The chart default is 24h.
-#   - The jaeger receiver cannot be disabled in this chart (see inline note);
-#     it stays on, unused, reachable only from inside the cluster.
-#   - reportingEnabled false: disables anonymous usage reporting to Grafana.
-#
 # Create the credentials Secret before the first sync (both namespaces --
 # monitoring for Tempo itself, minio-lab for the MinIO user job):
 #
