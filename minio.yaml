@@ -1,0 +1,88 @@
+# helm repo add minio https://charts.min.io/ --force-update
+# helm search repo minio/minio --versions | more
+#
+# Object storage generico do cluster. Cada aplicacao tem:
+#   - o seu bucket
+#   - o seu utilizador
+#   - a sua policy, restrita a esse bucket
+# Para adicionar uma app nova, acrescentar uma entrada em buckets/policies/users.
+#
+# Os segredos NAO vivem neste ficheiro: cada utilizador aponta para um Secret
+# existente no namespace minio-lab (existingSecret/existingSecretKey).
+#
+# Corre num unico no, sobre o disco scsi2 de 100GB (tag longhorn "minio").
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: minio
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://charts.min.io/
+    targetRevision: 5.4.0
+    chart: minio
+    helm:
+      releaseName: minio
+      valuesObject:
+        mode: standalone
+        replicas: 1
+        existingSecret: minio-root-credentials
+        persistence:
+          enabled: true
+          storageClass: longhorn-minio
+          size: 90Gi
+        resources:
+          requests:
+            cpu: 100m
+            memory: 512Mi
+          limits:
+            memory: 2Gi
+        buckets:
+          - name: postgres-backups
+            policy: none
+            purge: false
+          - name: loki-chunks
+            policy: none
+            purge: false
+          - name: loki-ruler
+            policy: none
+            purge: false
+        policies:
+          - name: postgres-backups-rw
+            statements:
+              - resources:
+                  - "arn:aws:s3:::postgres-backups"
+                  - "arn:aws:s3:::postgres-backups/*"
+                actions:
+                  - "s3:*"
+          - name: loki-rw
+            statements:
+              - resources:
+                  - "arn:aws:s3:::loki-chunks"
+                  - "arn:aws:s3:::loki-chunks/*"
+                  - "arn:aws:s3:::loki-ruler"
+                  - "arn:aws:s3:::loki-ruler/*"
+                actions:
+                  - "s3:*"
+        users:
+          - accessKey: barman-7a9d9c1267d2
+            existingSecret: barman-s3-credentials
+            existingSecretKey: ACCESS_SECRET_KEY
+            policy: postgres-backups-rw
+          - accessKey: loki
+            existingSecret: loki-s3-credentials
+            existingSecretKey: AWS_SECRET_ACCESS_KEY
+            policy: loki-rw
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: minio-lab
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
