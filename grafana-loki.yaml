@@ -44,7 +44,7 @@ spec:
           replicas: 1
           persistence:
             enabled: true
-            storageClass: longhorn
+            storageClass: longhorn-monitoring
             size: 20Gi
         write:
           replicas: 0
