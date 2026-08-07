@@ -45,6 +45,10 @@ spec:
           exporters:
             otlphttp/loki:
               endpoint: http://loki.monitoring.svc.cluster.local:3100/otlp
+            otlp/tempo:
+              endpoint: tempo.monitoring.svc.cluster.local:4317
+              tls:
+                insecure: true
           service:
             pipelines:
               logs:
@@ -54,7 +58,7 @@ spec:
               traces:
                 receivers: [otlp]
                 processors: [memory_limiter, batch]
-                exporters: [debug]
+                exporters: [otlp/tempo]
               metrics:
                 receivers: [otlp, prometheus]
                 processors: [memory_limiter, batch]
