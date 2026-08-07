@@ -3,7 +3,19 @@
 #
 # Observability UI. Loki is provisioned as the default datasource, so log
 # queries work out of the box with no manual setup after a fresh install.
-
+#
+# Ingress notes:
+#   - ingressClassName MUST be "traefik" (see `kubectl get ingressclass`).
+#     A name that matches no IngressClass makes Traefik silently ignore the
+#     Ingress: ADDRESS stays empty and Traefik answers 404.
+#   - The host MUST live under *.apps.l3softwares.local, otherwise external-dns
+#     ignores it (--domain-filter=apps.l3softwares.local) and DNS returns NXDOMAIN.
+#   - No spec.tls on purpose: Traefik's default TLSStore already serves a
+#     wildcard cert covering *.apps.l3softwares.local. The two router
+#     annotations are what put this Ingress on the HTTPS entrypoint.
+#   - root_url must be set explicitly, otherwise Grafana builds absolute links
+#     as http://<host>:3000/ and login redirects break behind the proxy.
+#
 # Admin credentials live in the grafana-admin Secret, created out of band so
 # they are never committed here. Without it the chart generates a new random
 # password on every helm upgrade, while the admin row inside the persisted
@@ -74,6 +86,29 @@ spec:
                 jsonData:
                   # Keep in sync with the Loki retention_period (168h).
                   maxLines: 1000
+                  # Turn a trace id found in a log line into a link to Tempo.
+                  # The regex must match how the id appears in the log body.
+                  derivedFields:
+                    - name: TraceID
+                      matcherRegex: "trace_?[iI][dD][\"=:\\s]+([a-f0-9]{32})"
+                      url: "$${__value.raw}"
+                      datasourceUid: tempo
+              - name: Tempo
+                type: tempo
+                uid: tempo
+                access: proxy
+                url: http://tempo.monitoring.svc.cluster.local:3200
+                jsonData:
+                  # Jump from a span back to the logs of the same service and
+                  # time window. Tags map span attributes to Loki labels.
+                  tracesToLogsV2:
+                    datasourceUid: loki
+                    spanStartTimeShift: "-5m"
+                    spanEndTimeShift: "5m"
+                    filterByTraceID: true
+                    tags:
+                      - key: service.name
+                        value: service_name
         grafana.ini:
           server:
             root_url: https://grafana.apps.l3softwares.local
