@@ -1,0 +1,100 @@
+# helm repo add grafana-community https://grafana-community.github.io/helm-charts --force-update
+# helm search repo grafana-community/tempo --versions | more
+#
+# Distributed tracing backend, single binary mode. Trace blocks live in MinIO
+# (s3://tempo-traces/); the local PVC only holds the WAL, which is why 5Gi is
+# enough. Same split as Loki: object storage for data, block storage for the
+# write-ahead log.
+#
+# Traces reach Tempo through the OTLP collector, never directly:
+#   sources -> otel-collector -> tempo:4317 (OTLP/gRPC)
+#
+# Notes on the overrides:
+#   - storage.trace.backend: the chart defaults to `local`, which writes blocks
+#     to the PVC and does not survive a rescheduled pod. s3 points at MinIO.
+#   - s3.insecure: plain HTTP inside the cluster; MinIO is never exposed.
+#   - Credentials are NOT set under s3.access_key/secret_key on purpose. They
+#     come from the tempo-s3-credentials Secret as AWS_ACCESS_KEY_ID /
+#     AWS_SECRET_ACCESS_KEY and are picked up by the AWS SDK, so nothing
+#     sensitive lands in this public repository.
+#   - retention 168h to match Loki, so a trace and its logs expire together.
+#     The chart default is 24h.
+#   - The jaeger receiver cannot be disabled in this chart (see inline note);
+#     it stays on, unused, reachable only from inside the cluster.
+#   - reportingEnabled false: disables anonymous usage reporting to Grafana.
+#
+# Create the credentials Secret before the first sync (both namespaces --
+# monitoring for Tempo itself, minio-lab for the MinIO user job):
+#
+#   TS=$(openssl rand -hex 20)
+#   for ns in monitoring minio-lab; do
+#     kubectl create secret generic tempo-s3-credentials -n $ns \
+#       --from-literal=AWS_ACCESS_KEY_ID=tempo \
+#       --from-literal=AWS_SECRET_ACCESS_KEY="$TS"
+#   done
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: tempo
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://grafana-community.github.io/helm-charts
+    targetRevision: 2.2.3
+    chart: tempo
+    helm:
+      releaseName: tempo
+      valuesObject:
+        replicas: 1
+        tempo:
+          reportingEnabled: false
+          retention: 168h
+          storage:
+            trace:
+              backend: s3
+              s3:
+                bucket: tempo-traces
+                endpoint: minio.minio-lab.svc.cluster.local:9000
+                insecure: true
+                forcepathstyle: true
+              wal:
+                path: /var/tempo/wal
+          receivers:
+            # The jaeger receiver stays enabled because this chart cannot drop
+            # it: templates/_ports.tpl dereferences
+            # .receivers.jaeger.protocols.thrift_compact unconditionally, so
+            # setting `jaeger: null` fails the render with a nil pointer.
+            # Its ports are only reachable inside the cluster and nothing
+            # sends to them; only OTLP is used.
+            otlp:
+              protocols:
+                grpc:
+                  endpoint: "0.0.0.0:4317"
+                http:
+                  endpoint: "0.0.0.0:4318"
+          extraEnvFrom:
+            - secretRef:
+                name: tempo-s3-credentials
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+        persistence:
+          enabled: true
+          storageClassName: longhorn-monitoring
+          size: 5Gi
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
