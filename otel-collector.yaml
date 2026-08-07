@@ -1,4 +1,31 @@
-# https://open-telemetry.github.io/opentelemetry-helm-charts
+# helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts --force-update
+# helm search repo open-telemetry/opentelemetry-collector --versions | more
+#
+# Single OTLP entry point for the whole estate. Every source -- Cloudflare
+# Workers, Vercel, VPS agents, application SDKs -- sends OTLP here, and the
+# collector fans out per signal. One endpoint means one tunnel route and one
+# set of credentials to rotate, and swapping a backend never touches a source.
+#
+# Notes on the overrides:
+#   - mode and image.repository are REQUIRED: the chart ships both empty and
+#     the install fails without them. The contrib image is needed for the
+#     exporters used here (core image would also need command.name changed).
+#   - Jaeger/Zipkin receivers and ports are removed in both places (ports and
+#     config.receivers: null). They are on by default and each one is an extra
+#     listening port for a protocol this cluster does not use. The null trick
+#     only works because this chart is installed directly, not as a subchart.
+#   - resources.limits.memory is set on purpose: memory_limiter derives its
+#     thresholds as a percentage of it and has no reference without a limit.
+#   - Loki receives logs over OTLP natively at /otlp (the standalone `loki`
+#     exporter is deprecated in collector-contrib).
+#
+# Cloudflare Workers specifics: they send OTLP/HTTP JSON, never protobuf, and
+# cannot speak gRPC. Point their destinations at the /v1/traces and /v1/logs
+# paths of this collector -- Cloudflare requires the full path, it does not
+# append one.
+#
+# TODO: traces and metrics still go to the debug exporter -- data arrives and
+# is counted, then dropped. Point them at Tempo and Prometheus once installed.
 
 apiVersion: argoproj.io/v1alpha1
 kind: Application
