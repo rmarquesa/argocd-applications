@@ -1,16 +1,27 @@
 # helm repo add minio https://charts.min.io/ --force-update
 # helm search repo minio/minio --versions | more
 #
-# Object storage generico do cluster. Cada aplicacao tem:
-#   - o seu bucket
-#   - o seu utilizador
-#   - a sua policy, restrita a esse bucket
-# Para adicionar uma app nova, acrescentar uma entrada em buckets/policies/users.
+# Cluster-wide object storage. Every application gets its own bucket, its own
+# user and a policy scoped to that bucket only -- the loki user cannot read
+# postgres backups, and vice versa. To onboard a new app, add one entry to
+# each of buckets/policies/users below. Nothing else changes.
 #
-# Os segredos NAO vivem neste ficheiro: cada utilizador aponta para um Secret
-# existente no namespace minio-lab (existingSecret/existingSecretKey).
+# Secrets never live in this file: each user points at a Secret that already
+# exists in the minio-lab namespace (existingSecret/existingSecretKey). This
+# repository is public.
 #
-# Corre num unico no, sobre o disco scsi2 de 100GB (tag longhorn "minio").
+# Storage layout:
+#   - Single node (mode: standalone). No HA: if the pod dies there is downtime
+#     until it is rescheduled. Accepted trade-off for this cluster.
+#   - Backed by StorageClass longhorn-minio -> diskSelector "minio" -> the
+#     dedicated 100GB scsi2 disk on worker-1. MinIO requires local block
+#     storage; never place it on NFS.
+#
+# Consumers:
+#   - CloudNativePG (Barman) writes to s3://postgres-backups/ using access key
+#     barman-7a9d9c1267d2. Changing that key breaks the ObjectStore in
+#     postgres-lab, which references secret s3-backup-credentials.
+#   - Loki writes chunks and index to s3://loki-chunks/ and s3://loki-ruler/.
 
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -41,6 +52,9 @@ spec:
             memory: 512Mi
           limits:
             memory: 2Gi
+        # Buckets, policies and users are created by post-install Helm hooks.
+        # ArgoCD deletes those Jobs once they succeed, so they will not show up
+        # in `kubectl get jobs`.
         buckets:
           - name: postgres-backups
             policy: none
