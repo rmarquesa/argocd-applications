@@ -1,0 +1,129 @@
+# helm repo add prometheus-community https://prometheus-community.github.io/helm-charts --force-update
+# helm search repo prometheus-community/kube-prometheus-stack --versions | more
+#
+# Metrics half of the observability stack: Prometheus Operator, Prometheus,
+# Alertmanager, node-exporter and kube-state-metrics.
+#
+# The bundled Grafana subchart is DISABLED -- this cluster already runs Grafana
+# from grafana.yaml. The stack's dashboards still land there: they ship as
+# ConfigMaps labelled `grafana_dashboard`, and the Grafana sidecar picks them up
+# across all namespaces (sidecar.dashboards.enabled in grafana.yaml).
+#
+# k3s specifics: kube-scheduler, kube-controller-manager, kube-proxy and etcd
+# do not expose the metrics endpoints this chart expects. Their ServiceMonitors
+# would stay permanently down and fire false alerts, so they are turned off.
+# CoreDNS and the kubelet DO work and are left enabled.
+#
+# Metrics ingestion has two independent paths:
+#   1. Prometheus scrapes the cluster itself (kubelet, nodes, k8s objects) via
+#      ServiceMonitors. Nothing to configure per app beyond a ServiceMonitor.
+#   2. External applications push OTLP metrics through the otel-collector,
+#      which forwards them here. enableOTLPReceiver exposes
+#      /api/v1/otlp/v1/metrics for that -- without it the collector gets 404.
+#
+# Storage: the Prometheus TSDB lives on a local PVC and CANNOT go to MinIO --
+# the TSDB format is not object storage. Retention is 15d, deliberately longer
+# than the 7d of logs and traces because metrics are far cheaper per unit of
+# time and are what you look at when investigating a slow regression.
+#
+# Alerting: defaultRules bring a mature set of Kubernetes alerts, evaluated by
+# Prometheus and routed by Alertmanager. Grafana's own alert engine handles
+# rules over logs and traces, which Alertmanager cannot see. Both are meant to
+# end up at the same webhook; Alertmanager's receiver is configured separately
+# so the URL stays out of this repository.
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kube-prometheus-stack
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://prometheus-community.github.io/helm-charts
+    targetRevision: 88.2.0
+    chart: kube-prometheus-stack
+    helm:
+      releaseName: kube-prometheus-stack
+      valuesObject:
+        # Already provided by grafana.yaml.
+        grafana:
+          enabled: false
+        # Not exposed by k3s -- would scrape nothing and alert forever.
+        kubeScheduler:
+          enabled: false
+        kubeControllerManager:
+          enabled: false
+        kubeProxy:
+          enabled: false
+        kubeEtcd:
+          enabled: false
+        prometheusOperator:
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+        prometheus:
+          prometheusSpec:
+            retention: 15d
+            # Guard against the TSDB filling the PVC: Prometheus starts
+            # dropping the oldest blocks before the disk is full.
+            retentionSize: 8GB
+            scrapeInterval: 30s
+            # Accept OTLP metrics pushed by the otel-collector at
+            # /api/v1/otlp/v1/metrics.
+            enableOTLPReceiver: true
+            # Pick up ServiceMonitors from every namespace, not just those
+            # carrying this release's labels. Without these an app that ships
+            # its own ServiceMonitor is silently ignored.
+            serviceMonitorSelectorNilUsesHelmValues: false
+            podMonitorSelectorNilUsesHelmValues: false
+            ruleSelectorNilUsesHelmValues: false
+            probeSelectorNilUsesHelmValues: false
+            resources:
+              requests:
+                cpu: 200m
+                memory: 1Gi
+              limits:
+                memory: 3Gi
+            storageSpec:
+              volumeClaimTemplate:
+                spec:
+                  storageClassName: longhorn-monitoring
+                  accessModes: ["ReadWriteOnce"]
+                  resources:
+                    requests:
+                      storage: 10Gi
+        alertmanager:
+          alertmanagerSpec:
+            retention: 120h
+            resources:
+              requests:
+                cpu: 50m
+                memory: 128Mi
+              limits:
+                memory: 512Mi
+            storage:
+              volumeClaimTemplate:
+                spec:
+                  storageClassName: longhorn-monitoring
+                  accessModes: ["ReadWriteOnce"]
+                  resources:
+                    requests:
+                      storage: 2Gi
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      # The CRDs of this chart exceed the annotation size limit of a normal
+      # kubectl apply.
+      - ServerSideApply=true
