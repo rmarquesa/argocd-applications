@@ -1,6 +1,29 @@
 # helm repo add minio https://charts.min.io/ --force-update
 # helm search repo minio/minio --versions | more
 #
+# Cluster-wide object storage. Every application gets its own bucket, its own
+# user and a policy scoped to that bucket only -- the loki user cannot read
+# postgres backups, and vice versa. To onboard a new app, add one entry to
+# each of buckets/policies/users below. Nothing else changes.
+#
+# Secrets never live in this file: each user points at a Secret that already
+# exists in the minio-lab namespace (existingSecret/existingSecretKey). This
+# repository is public.
+#
+# Storage layout:
+#   - Single node (mode: standalone). No HA: if the pod dies there is downtime
+#     until it is rescheduled. Accepted trade-off for this cluster.
+#   - Backed by StorageClass longhorn-minio -> diskSelector "minio" -> the
+#     dedicated 100GB scsi2 disk on worker-1. MinIO requires local block
+#     storage; never place it on NFS.
+#
+# Consumers:
+#   - CloudNativePG (Barman) writes to s3://postgres-backups/ using access key
+#     barman-7a9d9c1267d2. Changing that key breaks the ObjectStore in
+#     postgres-lab, which references secret s3-backup-credentials.
+#   - Loki writes chunks and index to s3://loki-chunks/ and s3://loki-ruler/.
+#   - Tempo writes trace blocks to s3://tempo-traces/.
+
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -43,6 +66,9 @@ spec:
           - name: loki-ruler
             policy: none
             purge: false
+          - name: tempo-traces
+            policy: none
+            purge: false
         policies:
           - name: postgres-backups-rw
             statements:
@@ -60,6 +86,13 @@ spec:
                   - "arn:aws:s3:::loki-ruler/*"
                 actions:
                   - "s3:*"
+          - name: tempo-rw
+            statements:
+              - resources:
+                  - "arn:aws:s3:::tempo-traces"
+                  - "arn:aws:s3:::tempo-traces/*"
+                actions:
+                  - "s3:*"
         users:
           - accessKey: barman-7a9d9c1267d2
             existingSecret: barman-s3-credentials
@@ -69,6 +102,10 @@ spec:
             existingSecret: loki-s3-credentials
             existingSecretKey: AWS_SECRET_ACCESS_KEY
             policy: loki-rw
+          - accessKey: tempo
+            existingSecret: tempo-s3-credentials
+            existingSecretKey: AWS_SECRET_ACCESS_KEY
+            policy: tempo-rw
   destination:
     server: https://kubernetes.default.svc
     namespace: minio-lab
