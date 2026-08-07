@@ -1,10 +1,38 @@
-# cloudflared tunnel login                      # generate ~/.cloudflared/cert.pem
-# cloudflared tunnel create proxmox             # generate ~/.cloudflared/<TUNNEL-ID>.json
-
-# kubectl create ns cloudflared
-# kubectl create secret generic cloudflared-credentials -n cloudflared \
-#  --from-file=cert.pem=$HOME/.cloudflared/cert.pem \
-#  --from-file=credentials.json=$HOME/.cloudflared/<TUNNEL-ID>.json
+# helm repo add community-charts https://community-charts.github.io/helm-charts --force-update
+# helm search repo community-charts/cloudflared --versions | more
+#
+# Outbound tunnel to Cloudflare. No inbound port is opened on the firewall:
+# cloudflared dials out and Cloudflare terminates public TLS at the edge.
+#
+# The `ingress` list below is cloudflared's own routing table, NOT a Kubernetes
+# Ingress. Rules are evaluated top to bottom and the FIRST match wins, so the
+# http_status:404 catch-all must always stay last.
+#
+# Create the tunnel and its credentials BEFORE the first sync, otherwise the
+# pods sit in CreateContainerConfigError. The namespace has to exist first
+# because ArgoCD only creates it during the sync:
+#
+#   cloudflared tunnel login                 # writes ~/.cloudflared/cert.pem
+#   cloudflared tunnel create proxmox        # writes ~/.cloudflared/<TUNNEL-ID>.json
+#
+#   kubectl create ns cloudflared
+#   kubectl create secret generic cloudflared-credentials -n cloudflared \
+#     --from-file=cert.pem=$HOME/.cloudflared/cert.pem \
+#     --from-file=credentials.json=$HOME/.cloudflared/<TUNNEL-ID>.json
+#
+# tunnelConfig.name must match the tunnel created above.
+#
+# To publish a service, add a rule before the catch-all and create the DNS
+# record with `cloudflared tunnel route dns proxmox <hostname>`:
+#
+#   - hostname: otel.<domain>
+#     service: http://otel-collector.monitoring.svc.cluster.local:4318
+#
+# Anything exposed this way should sit behind a Cloudflare Access policy --
+# the OTLP endpoint accepts writes from anyone who can reach it.
+#
+# replica.allNodes is false on purpose: the chart default (true) would run a
+# DaemonSet with one pod per node. Two replicas are plenty for a tunnel.
 
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -41,9 +69,28 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: cloudflared
+  # The tunnel routing table is edited live (adding hostnames, tweaking rules)
+  # without going through Git, so ArgoCD must leave ConfigMap/data alone.
+  #
+  # This needs BOTH settings below to work:
+  #   - ignoreDifferences stops the ConfigMap from being reported OutOfSync,
+  #     which is what keeps selfHeal from reverting manual edits.
+  #   - RespectIgnoreDifferences (in syncOptions) makes the sync operation
+  #     itself skip the ignored field. Without it, ignoreDifferences only
+  #     affects drift DETECTION: any sync triggered for another reason -- a
+  #     commit to this file, or a manual sync -- would still overwrite /data
+  #     with the chart-rendered value and drop every live route.
+  ignoreDifferences:
+    - group: ""
+      kind: ConfigMap
+      name: cloudflared
+      namespace: cloudflared
+      jsonPointers:
+        - /data
   syncPolicy:
     automated:
       prune: true
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
+      - RespectIgnoreDifferences=true
