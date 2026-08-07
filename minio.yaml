@@ -42,6 +42,13 @@ spec:
       valuesObject:
         mode: standalone
         replicas: 1
+        # Recreate, not RollingUpdate: the PVC is ReadWriteOnce, so a new pod
+        # can never attach the volume while the old one still holds it. With
+        # the chart default (RollingUpdate, maxUnavailable 0) every upgrade
+        # deadlocks on Multi-Attach and the post-upgrade hooks that create
+        # buckets and users never run.
+        deploymentUpdate:
+          type: Recreate
         existingSecret: minio-root-credentials
         persistence:
           enabled: true
