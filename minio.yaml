@@ -9,19 +9,6 @@
 # Secrets never live in this file: each user points at a Secret that already
 # exists in the minio-lab namespace (existingSecret/existingSecretKey). This
 # repository is public.
-#
-# Storage layout:
-#   - Single node (mode: standalone). No HA: if the pod dies there is downtime
-#     until it is rescheduled. Accepted trade-off for this cluster.
-#   - Backed by StorageClass longhorn-minio -> diskSelector "minio" -> the
-#     dedicated 100GB scsi2 disk on worker-1. MinIO requires local block
-#     storage; never place it on NFS.
-#
-# Consumers:
-#   - CloudNativePG (Barman) writes to s3://postgres-backups/ using access key
-#     barman-7a9d9c1267d2. Changing that key breaks the ObjectStore in
-#     postgres-lab, which references secret s3-backup-credentials.
-#   - Loki writes chunks and index to s3://loki-chunks/ and s3://loki-ruler/.
 
 apiVersion: argoproj.io/v1alpha1
 kind: Application
