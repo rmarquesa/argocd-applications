@@ -4,24 +4,6 @@
 # Log storage. Chunks and index go to MinIO (S3); the local PVC only holds the
 # WAL and cache, which is why 5Gi is enough.
 #
-# Almost nothing here is a chart default, and each override is load-bearing:
-#   - storage.type: chart defaults to s3 with an empty endpoint, which starts
-#     and then fails to write. Endpoint and bucket names are explicit.
-#   - s3ForcePathStyle: required by MinIO (no virtual-host style buckets).
-#   - insecure: plain HTTP inside the cluster; MinIO is never exposed publicly.
-#   - replication_factor 1: chart defaults to 3, which leaves the ring
-#     incomplete on a single replica and makes Loki reject writes.
-#   - schemaConfig: ships empty and Loki refuses to start without it. Do NOT
-#     edit this entry once real logs exist -- add a new one with a future
-#     `from:` date instead, or everything written before becomes unreadable.
-#   - auth_enabled false: single tenant. With the default (true) every query
-#     needs an X-Scope-OrgID header and Grafana errors out.
-#   - chunksCache/resultsCache disabled: they default to on and request 8GB and
-#     1GB of RAM respectively. Revisit if S3 query latency becomes a problem --
-#     with object storage these caches are what make queries usable at scale.
-#   - gateway disabled: it is an nginx front-end that only earns its place in
-#     the scalable deployment modes.
-#
 # Retention is 168h (7 days), enforced by the compactor. Because retention
 # works at index-table granularity (period: 24h), logs actually disappear
 # somewhere between 7 and 8 days, never exactly at 7.
