@@ -5,9 +5,10 @@
 # Alertmanager, node-exporter and kube-state-metrics.
 #
 # The bundled Grafana subchart is DISABLED -- this cluster already runs Grafana
-# from grafana.yaml. The stack's dashboards still land there: they ship as
-# ConfigMaps labelled `grafana_dashboard`, and the Grafana sidecar picks them up
-# across all namespaces (sidecar.dashboards.enabled in grafana.yaml).
+# from grafana.yaml. Its dashboards still land there, but that needs BOTH
+# sides: forceDeployDashboards here (otherwise disabling the subchart also
+# skips the dashboard ConfigMaps) and sidecar.dashboards.enabled in
+# grafana.yaml to import them.
 #
 # k3s specifics: kube-scheduler, kube-controller-manager, kube-proxy and etcd
 # do not expose the metrics endpoints this chart expects. Their ServiceMonitors
@@ -51,6 +52,13 @@ spec:
         # Already provided by grafana.yaml.
         grafana:
           enabled: false
+          # With grafana.enabled false the chart skips the dashboard
+          # ConfigMaps entirely -- disabling the subchart would otherwise mean
+          # losing the dashboards too. forceDeployDashboards renders them
+          # anyway, labelled grafana_dashboard, for the external Grafana's
+          # sidecar to import.
+          forceDeployDashboards: true
+          defaultDashboardsEnabled: true
         # Not exposed by k3s -- would scrape nothing and alert forever.
         kubeScheduler:
           enabled: false
